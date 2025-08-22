@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reservations – Gimmy</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div class="brand"><span class="dot"></span> Gimmy</div>
+    <div class="row">
+      <a class="badge" href="/">Menu</a>
+      <a class="badge" href="/orders.html">My Orders</a>
+      <a id="nav-admin" class="badge hidden" href="/admin.html">Admin</a>
+      <span id="nav-user" class="badge"></span>
+      <button class="ghost" onclick="logout()">Logout</button>
+    </div>
+  </div>
+
+  <div class="grid" style="margin-top:20px; grid-template-columns: 1.1fr .9fr; align-items:start;">
+    <div class="card">
+      <h2 style="margin:0">Book a Table</h2>
+      <div class="row" style="margin-top:12px; gap:12px; flex-wrap: wrap;">
+        <input id="date" type="datetime-local" />
+        <select id="members">
+          <option value="1">1</option>
+          <option value="2" selected>2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+        </select>
+        <button class="ghost" id="check">Check availability</button>
+        <button class="primary" id="book" disabled>Book selected</button>
+      </div>
+      <hr class="sep" />
+      <div id="availability"></div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin:0">My Reservations</h2>
+      <hr class="sep" />
+      <table class="table" id="myres">
+        <thead><tr><th>When</th><th>Table</th><th>Members</th><th>Status</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<div id="toast" class="toast hidden"></div>
+<script src="/app.js"></script>
+<script>
+(async function(){
+  if (!guardAuth()) return;
+
+  const dateEl = document.getElementById('date');
+  dateEl.value = toLocalDTValue(new Date(Date.now()+60*60*1000)); // default 1h later
+  let selectedTableId = null;
+
+  async function loadMine(){
+    const res = await API.fetch('/api/reservations/mine');
+    const tbody = document.querySelector('#myres tbody');
+    tbody.innerHTML = res.map(r=>`
+      <tr>
+        <td>${fmtDT(r.startTime)}</td>
+        <td>${r.table?.number || r.tableId}</td>
+        <td>${r.members}</td>
+        <td><span class="tag ${r.status==='confirmed'?'ok':(r.status==='cancelled'?'bad':'warn')}">${r.status}</span></td>
+        <td>${r.status==='confirmed'
+          ? `<button class="danger" data-id="${r.id}" data-act="cancel">Cancel</button>`
+          : ''}</td>
+      </tr>`).join('');
+    tbody.querySelectorAll('button[data-act="cancel"]').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        try{
+          await API.fetch(`/api/reservations/${btn.dataset.id}`, { method:'DELETE' });
+          toast('Cancelled');
+          await loadMine();
+        }catch(e){ toast(e.message); }
+      });
+    });
+  }
+
+  async function checkAvailability(){
+    selectedTableId = null;
+    document.getElementById('book').disabled = true;
+    const when = new Date(dateEl.value);
+    if (isNaN(when)) { toast('Pick a valid date & time'); return; }
+    try{
+      const data = await API.fetch(`/api/reservations/availability?when=${encodeURIComponent(when.toISOString())}`);
+      const wrap = document.getElementById('availability');
+      wrap.innerHTML = `
+        <div class="small">Slot: ${fmtDT(data.slotStart)} – ${fmtDT(data.slotEnd)}</div>
+        <hr class="sep" />
+        <div class="grid menu">
+          ${data.free.map(t=>`
+            <div class="card">
+              <div class="spread">
+                <div>
+                  <div style="font-weight:600">Table ${t.number}</div>
+                  <div class="small">${t.seats} seats</div>
+                </div>
+                <div class="row">
+                  ${t.available ? `<button class="ok" data-id="${t.id}" data-number="${t.number}">Select</button>` : '<span class="tag bad">Busy</span>'}
+                </div>
+              </div>
+            </div>`).join('')}
+        </div>`;
+      wrap.querySelectorAll('button[data-id]').forEach(btn=>{
+        btn.addEventListener('click', ()=>{
+          selectedTableId = +btn.dataset.id;
+          document.querySelectorAll('#availability button[data-id]').forEach(b=>b.classList.remove('warn'));
+          btn.classList.add('warn');
+          document.getElementById('book').disabled = false;
+        });
+      });
+    }catch(e){ toast(e.message); }
+  }
+
+  async function book(){
+    if (!selectedTableId) return;
+    const when = new Date(dateEl.value);
+    const members = +document.getElementById('members').value;
+    try{
+      await API.fetch('/api/reservations', { method:'POST', body:{ tableId: selectedTableId, members, startTime: when.toISOString() }});
+      toast('Reservation confirmed');
+      await loadMine();
+    }catch(e){ toast(e.message); }
+  }
+
+  document.getElementById('check').addEventListener('click', checkAvailability);
+  document.getElementById('book').addEventListener('click', book);
+
+  loadMine();
+})();
+</script>
+</body>
+</html>

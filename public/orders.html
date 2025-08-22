@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>My Orders – Gimmy</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<div class="container">
+  <!-- Header / Navigation -->
+  <div class="header">
+    <div class="brand"><span class="dot"></span> Gimmy</div>
+    <div class="row">
+      <a class="badge" href="/">Menu</a>
+      <a class="badge" href="/reservations.html">Reservations</a>
+      <a id="nav-admin" class="badge hidden" href="/admin.html">Admin</a>
+      <span id="nav-user" class="badge"></span>
+      <button class="ghost" onclick="logout()">Logout</button>
+    </div>
+  </div>
+
+  <!-- Orders Table -->
+  <div class="card">
+    <h2 style="margin:0">My Orders</h2>
+    <hr class="sep" />
+    <table class="table" id="orders">
+      <thead>
+        <tr>
+          <th>Placed</th>
+          <th>Reservation</th>
+          <th>Items</th>
+          <th>Total</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<!-- Scripts -->
+<script src="/app.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", async () => {
+  if (!guardAuth()) return;
+
+  const tbody = document.querySelector("#orders tbody");
+
+  async function loadOrders() {
+    try {
+      const orders = await API.fetch("/api/orders/mine");
+
+      if (!orders.length) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center">No orders yet</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = orders.map(o => {
+        // Ensure items is parsed (some DBs may store JSON as string)
+        let itemsArr = [];
+        if (Array.isArray(o.items)) {
+          itemsArr = o.items;
+        } else if (typeof o.items === "string") {
+          try { itemsArr = JSON.parse(o.items); } catch { itemsArr = []; }
+        }
+
+        const items = itemsArr.map(i => `${i.name} × ${i.qty}`).join(", ") || "-";
+
+        const statusClass =
+          o.status === "ready" ? "ok" :
+          o.status === "cancelled" ? "bad" :
+          o.status === "accepted" ? "warn" : "";
+
+        return `
+          <tr>
+            <td>${fmtDT(o.createdAt)}</td>
+            <td>Table ${o.reservation?.table?.number || o.reservation?.tableId || "-"}</td>
+            <td>${items}</td>
+            <td class="price">${fmtPrice(o.totalPrice || 0)}</td>
+            <td><span class="tag ${statusClass}">${o.status}</span></td>
+          </tr>
+        `;
+      }).join("");
+    } catch (err) {
+      console.error(err);
+      toast("Failed to load orders");
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:red">Error loading orders</td></tr>`;
+    }
+  }
+
+  loadOrders();
+});
+</script>
+</body>
+</html>

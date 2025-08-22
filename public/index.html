@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gimmy – Menu</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div class="brand"><span class="dot"></span> Gimmy</div>
+    <div class="row">
+      <a class="badge" href="/reservations.html">Reservations</a>
+      <a class="badge" href="/orders.html">My Orders</a>
+      <a id="nav-admin" class="badge hidden" href="/admin.html">Admin</a>
+      <span id="nav-user" class="badge"></span>
+      <button class="ghost" onclick="logout()">Logout</button>
+    </div>
+  </div>
+
+  <div class="grid" style="margin-top:20px; grid-template-columns: 1.6fr .8fr; align-items:start;">
+    <div class="card">
+      <div class="spread"><h2 style="margin:0">Menu</h2><span class="kicker" id="menu-count"></span></div>
+      <hr class="sep" />
+      <div class="grid menu" id="menu"></div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin:0">Cart</h2>
+      <hr class="sep" />
+      <div id="cart"></div>
+      <hr class="sep" />
+      <div class="row">
+        <select id="reservation-select" style="flex:1"></select>
+        <button class="primary" id="place-order">Place Order</button>
+      </div>
+      <div class="small" style="margin-top:8px">Orders must be linked to one of your confirmed upcoming reservations.</div>
+    </div>
+  </div>
+</div>
+<div id="toast" class="toast hidden"></div>
+
+<script src="/app.js"></script>
+<script>
+if (!guardAuth(false)) { /* allow browsing without login */ }
+
+let CART = [];
+
+async function loadMenu(){
+  const items = await API.fetch('/api/menu');
+  document.getElementById('menu-count').textContent = `${items.length} items`;
+  const wrap = document.getElementById('menu');
+  wrap.innerHTML = '';
+  items.forEach(it=>{
+    const card = document.createElement('div');
+    card.className='card';
+    card.innerHTML = `
+      <div class="spread">
+        <div>
+          <div style="font-weight:600">${it.name}</div>
+          <div class="small">${it.available?'<span class="tag ok">Available</span>':'<span class="tag bad">Unavailable</span>'}</div>
+        </div>
+        <div class="row">
+          <div class="price">${fmtPrice(it.price)}</div>
+          <button ${!it.available?'disabled':''} data-id="${it.id}">Add</button>
+        </div>
+      </div>`;
+    const btn = card.querySelector('button');
+    btn.addEventListener('click', ()=>addToCart(it));
+    wrap.appendChild(card);
+  });
+}
+
+function addToCart(it){
+  const existing = CART.find(x=>x.menuItemId===it.id);
+  if (existing) existing.qty += 1; else CART.push({ menuItemId: it.id, name: it.name, price: it.price, qty: 1 });
+  renderCart();
+}
+
+function renderCart(){
+  const el = document.getElementById('cart');
+  if (!CART.length) { el.innerHTML = '<div class="small">Your cart is empty.</div>'; return; }
+  const total = CART.reduce((s,i)=>s+i.price*i.qty,0);
+  el.innerHTML = CART.map((i,idx)=>`
+    <div class='spread'>
+      <div>${i.name} <span class='small'>×</span>
+        <input type='number' min='1' value='${i.qty}' style='width:64px' data-idx="${idx}" class="qty">
+      </div>
+      <div class='row'>
+        <div class='price'>${fmtPrice(i.price*i.qty)}</div>
+        <button class='ghost' data-idx="${idx}" class="rm">✕</button>
+      </div>
+    </div>`).join('') + `
+    <hr class='sep'/>
+    <div class='spread'><div>Total</div><div class='price' id='cart-total'>${fmtPrice(total)}</div></div>`;
+
+  el.querySelectorAll('.qty').forEach(inp=>{
+    inp.addEventListener('change', e=>{
+      const idx = +e.target.dataset.idx;
+      CART[idx].qty = Math.max(1, parseInt(e.target.value||1,10));
+      renderCart();
+    });
+  });
+  el.querySelectorAll('.rm').forEach(btn=>{
+    btn.addEventListener('click', e=>{
+      const idx = +e.target.dataset.idx;
+      CART.splice(idx,1);
+      renderCart();
+    });
+  });
+}
+
+async function loadMyUpcomingReservations(){
+  const sel = document.getElementById('reservation-select');
+  sel.innerHTML = '<option>Loading…</option>';
+  try {
+    if (!API.user) { sel.innerHTML='<option value="">Login to place orders</option>'; return; }
+    const mine = await API.fetch('/api/reservations/mine');
+    const upcoming = mine.filter(r=> new Date(r.startTime) >= new Date() && r.status==='confirmed');
+    if (!upcoming.length) { sel.innerHTML = '<option value="">No upcoming reservations</option>'; return; }
+    sel.innerHTML = upcoming.map(r=>`<option value='${r.id}'>Table ${r.table?.number||r.tableId} — ${new Date(r.startTime).toLocaleString()}</option>`).join('');
+  } catch(err) { sel.innerHTML = `<option>Error: ${err.message}</option>`; }
+}
+
+document.getElementById('place-order').addEventListener('click', async ()=>{
+  if (!API.user) { location.href='/login.html'; return; }
+  if (!CART.length) return toast('Cart is empty');
+  const reservationId = document.getElementById('reservation-select').value;
+  if (!reservationId) return toast('Select a reservation');
+  try{
+    const order = await API.fetch('/api/orders', { method:'POST', body:{ reservationId, items: CART.map(i=>({ menuItemId:i.menuItemId, qty:i.qty })) }});
+    CART = []; renderCart();
+    toast('Order placed');
+    location.href = '/orders.html';
+  }catch(e){ toast(e.message); }
+});
+
+loadMenu();
+loadMyUpcomingReservations();
+renderCart();
+</script>
+</body>
+</html>

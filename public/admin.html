@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Admin – Gimmy</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div class="brand"><span class="dot"></span> Gimmy Admin</div>
+    <div class="row">
+      <span id="nav-user" class="badge"></span>
+      <button class="ghost" onclick="logout()">Logout</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="flex-wrap:wrap">
+      <button class="ghost" data-tab="menu">Menu</button>
+      <button class="ghost" data-tab="reservations">Reservations</button>
+      <button class="ghost" data-tab="orders">Orders</button>
+      <button class="ghost" data-tab="occupancy">Occupancy</button>
+    </div>
+  </div>
+
+ 
+  <div id="tab-menu" class="card">
+    <div class="spread"><h2 style="margin:0">Menu</h2>
+      <div class="row">
+        <input id="m-name" placeholder="Item name" />
+        <input id="m-price" type="number" placeholder="Price" />
+        <label class="row small"><input type="checkbox" id="m-available" checked style="width:auto"> Available</label>
+        <button class="primary" id="m-add">Add</button>
+      </div>
+    </div>
+    <hr class="sep" />
+    <table class="table" id="menu">
+      <thead><tr><th>Name</th><th>Price</th><th>Available</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  
+  <div id="tab-reservations" class="card hidden">
+    <h2 style="margin:0">Reservations</h2>
+    <hr class="sep" />
+    <table class="table" id="resv">
+      <thead><tr><th>When</th><th>Table</th><th>Members</th><th>Status</th><th>UserId</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+ 
+  <div id="tab-orders" class="card hidden">
+    <h2 style="margin:0">Orders</h2>
+    <hr class="sep" />
+    <table class="table" id="orders">
+      <thead><tr><th>Time</th><th>Resv</th><th>Items</th><th>Total</th><th>Status</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  
+  <div id="tab-occupancy" class="card hidden">
+    <div class="spread"><h2 style="margin:0">Next 12h Occupancy</h2><button class="ghost" id="occ-refresh">Refresh</button></div>
+    <hr class="sep" />
+    <div id="occ"></div>
+  </div>
+</div>
+<div id="toast" class="toast hidden"></div>
+
+<script src="/app.js"></script>
+<script>
+(async function(){
+  if (!guardAuth()) return;
+  if (API.user.role !== 'admin') {
+    location.href = '/';
+    return;
+  }
+
+  document.querySelectorAll('[data-tab]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const tab = btn.dataset.tab;
+      document.querySelectorAll('[id^="tab-"]').forEach(el=>el.classList.add('hidden'));
+      document.getElementById('tab-'+tab).classList.remove('hidden');
+    });
+  });
+
+  
+  async function loadMenuAdmin(){
+    const items = await API.fetch('/api/menu');
+    const tbody = document.querySelector('#menu tbody');
+    tbody.innerHTML = items.map(it=>`
+      <tr>
+        <td><input value="${it.name}" data-id="${it.id}" data-f="name" /></td>
+        <td><input type="number" value="${it.price}" data-id="${it.id}" data-f="price" /></td>
+        <td><input type="checkbox" ${it.available?'checked':''} data-id="${it.id}" data-f="available" /></td>
+        <td>
+          <button class="warn" data-id="${it.id}" data-act="save">Save</button>
+          <button class="danger" data-id="${it.id}" data-act="del">Delete</button>
+        </td>
+      </tr>`).join('');
+    tbody.querySelectorAll('button[data-act="save"]').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const id = btn.dataset.id;
+        const row = btn.closest('tr');
+        const name = row.querySelector('input[data-f="name"]').value.trim();
+        const price = +row.querySelector('input[data-f="price"]').value;
+        const available = row.querySelector('input[data-f="available"]').checked;
+        try{
+          await API.fetch(`/api/admin/menu/${id}`, { method:'PUT', body:{ name, price, available } });
+          toast('Saved');
+          await loadMenuAdmin();
+        }catch(e){ toast(e.message); }
+      });
+    });
+    tbody.querySelectorAll('button[data-act="del"]').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        if(!confirm('Delete this item?')) return;
+        try{
+          await API.fetch(`/api/admin/menu/${btn.dataset.id}`, { method:'DELETE' });
+          toast('Deleted');
+          await loadMenuAdmin();
+        }catch(e){ toast(e.message); }
+      });
+    });
+  }
+  document.getElementById('m-add').addEventListener('click', async ()=>{
+    const name = document.getElementById('m-name').value.trim();
+    const price = +document.getElementById('m-price').value;
+    const available = document.getElementById('m-available').checked;
+    if (!name || !price) return toast('Name and price required');
+    try{
+      await API.fetch('/api/admin/menu', { method:'POST', body:{ name, price, available } });
+      document.getElementById('m-name').value='';
+      document.getElementById('m-price').value='';
+      toast('Item added');
+      await loadMenuAdmin();
+    }catch(e){ toast(e.message); }
+  });
+
+  
+  async function loadReservations(){
+    const list = await API.fetch('/api/admin/reservations');
+    const tbody = document.querySelector('#resv tbody');
+    tbody.innerHTML = list.map(r=>`
+      <tr>
+        <td>${fmtDT(r.startTime)}</td>
+        <td>${r.table?.number || r.tableId}</td>
+        <td>${r.members}</td>
+        <td><span class="tag ${r.status==='confirmed'?'ok':(r.status==='cancelled'?'bad':'warn')}">${r.status}</span></td>
+        <td>${r.userId}</td>
+      </tr>`).join('');
+  }
+
+
+async function loadOrders(){
+  const tbody = document.querySelector('#orders tbody');
+  tbody.innerHTML = '<tr><td colspan="5">Loading…</td></tr>';
+
+  try {
+    const orders = await API.fetch('/api/admin/orders');
+    if (!orders.length) {
+      tbody.innerHTML = '<tr><td colspan="5">No orders found</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = orders.map(o => `
+      <tr>
+        <td>${fmtDT(o.createdAt)}</td>
+        <td>Table ${o.reservation?.table?.number || o.reservation?.tableId}</td>
+        <td>
+          ${o.items.map(i => `${i.qty}× ${i.name}`).join('<br/>')}
+        </td>
+        <td>${fmtPrice(o.totalPrice)}</td>
+        <td>
+          <select data-id="${o.id}" class="order-status">
+            <option ${o.status==='pending'?'selected':''}>pending</option>
+            <option ${o.status==='accepted'?'selected':''}>accepted</option>
+            <option ${o.status==='ready'?'selected':''}>ready</option>
+            <option ${o.status==='cancelled'?'selected':''}>cancelled</option>
+          </select>
+        </td>
+      </tr>
+    `).join('');
+
+    tbody.querySelectorAll('.order-status').forEach(sel => {
+      sel.addEventListener('change', async () => {
+        const id = sel.dataset.id;
+        const status = sel.value;
+        await API.fetch(`/api/admin/orders/${id}/status`, { method:'PUT', body:{ status } });
+        toast('Updated');
+      });
+    });
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="5" style="color:red">${e.message}</td></tr>`;
+  }
+}
+
+
+
+  async function loadOccupancy(){
+    const data = await API.fetch('/api/admin/occupancy');
+    const wrap = document.getElementById('occ');
+    const keys = Object.keys(data).sort((a,b)=>+a-+b);
+    wrap.innerHTML = keys.map(k=>{
+      const t = data[k];
+      const list = t.reservations.map(r=>`<div class="small">#${r.reservationId} • ${fmtDT(r.startTime)} • ${r.members}p • ${r.status}</div>`).join('') || '<div class="small">No upcoming reservations</div>';
+      return `<div class="card" style="margin-bottom:10px">
+        <div class="spread"><div style="font-weight:600">Table ${k}</div><div class="tag">${t.seats} seats</div></div>
+        <hr class="sep" />
+        ${list}
+      </div>`;
+    }).join('');
+  }
+  document.getElementById('occ-refresh').addEventListener('click', loadOccupancy);
+
+  // ---- Initial Loads ----
+  loadMenuAdmin();
+  loadReservations();
+  loadOrders();
+  loadOccupancy();
+
+})();
+</script>
+</body>
+</html>
